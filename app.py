@@ -52,16 +52,20 @@ def convert():
             },
             timeout=15,
         )
+        print(f"[RapidAPI] status={response.status_code} body={response.text!r}", flush=True)
         response.raise_for_status()
         result = response.json()
     except requests.exceptions.Timeout:
+        print("[RapidAPI] Request timed out", flush=True)
         return jsonify({"error": "Request timed out. Please try again."}), 502
     except requests.exceptions.HTTPError as e:
         status = e.response.status_code
+        print(f"[RapidAPI] HTTP error {status} body={e.response.text!r}", flush=True)
         if status == 403:
             return jsonify({"error": "API key invalid or quota exceeded."}), 502
         return jsonify({"error": f"API error ({status})."}), 502
     except Exception as e:
+        print(f"[RapidAPI] Unexpected error: {e}", flush=True)
         return jsonify({"error": f"Network error: {str(e)}"}), 502
 
     download_url = result.get("link") or result.get("download_url") or result.get("url")
