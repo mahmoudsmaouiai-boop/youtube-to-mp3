@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: youtube-to-mp3
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --workers 2 --timeout 120
