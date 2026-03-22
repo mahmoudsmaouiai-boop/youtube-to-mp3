@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import requests
 from flask import Flask, request, jsonify, render_template, redirect
 
@@ -87,11 +88,36 @@ def convert():
         print(f"[RapidAPI] Unexpected error: {e}", flush=True)
         return jsonify({"error": f"Network error: {str(e)}"}), 502
 
-    download_url = result.get("link") or result.get("download_url") or result.get("url")
-    if not download_url:
-        return jsonify({"error": "API did not return a download link. The video may be unavailable.", "raw": result}), 400
+    file_url = result.get("file") or result.get("link") or result.get("download_url") or result.get("url")
+    if not file_url:
+        return jsonify({"error": "API did not return a file URL. The video may be unavailable.", "raw": result}), 400
 
-    return jsonify({"download_url": download_url})
+    print(f"[RapidAPI] file URL: {file_url} — starting poll", flush=True)
+
+    # Poll until the file is ready (200) or we time out (60 attempts × 5s = 5 min)
+    MAX_ATTEMPTS = 60
+    POLL_INTERVAL = 5  # seconds
+
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            poll = requests.get(file_url, timeout=10, allow_redirects=True)
+        except Exception as e:
+            print(f"[poll {attempt}] request error: {e}", flush=True)
+            time.sleep(POLL_INTERVAL)
+            continue
+
+        print(f"[poll {attempt}/{MAX_ATTEMPTS}] status={poll.status_code}", flush=True)
+
+        if poll.status_code == 200:
+            return jsonify({"download_url": file_url})
+
+        if poll.status_code not in (404, 202, 204):
+            # Unexpected status — stop early rather than keep hammering
+            return jsonify({"error": f"File URL returned unexpected status {poll.status_code}."}), 502
+
+        time.sleep(POLL_INTERVAL)
+
+    return jsonify({"error": "File was not ready after 5 minutes. Please try again."}), 504
 
 
 if __name__ == "__main__":
