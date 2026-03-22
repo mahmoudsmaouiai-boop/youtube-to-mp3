@@ -68,9 +68,12 @@ def convert():
             },
             timeout=15,
         )
-        print(f"[RapidAPI] status={response.status_code} body={response.text!r}", flush=True)
+        print(f"[RapidAPI] status={response.status_code}", flush=True)
+        print(f"[RapidAPI] raw body: {response.text}", flush=True)
         response.raise_for_status()
         result = response.json()
+        print(f"[RapidAPI] parsed keys: {list(result.keys())}", flush=True)
+        print(f"[RapidAPI] parsed result: {result}", flush=True)
     except requests.exceptions.Timeout:
         print("[RapidAPI] Request timed out", flush=True)
         return jsonify({"error": "Request timed out. Please try again."}), 502
