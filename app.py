@@ -1,12 +1,12 @@
 import os
 import re
-import yt_dlp
-from flask import Flask, request, jsonify, render_template, send_file
+import requests
+from flask import Flask, request, jsonify, render_template, redirect
 
 app = Flask(__name__)
 
-DOWNLOADS_DIR = os.path.join(os.path.dirname(__file__), "downloads")
-MAX_DURATION_SECONDS = 30 * 60  # 30 minutes
+RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY", "")
+RAPIDAPI_HOST = "youtube-mp3-audio-video-downloader.p.rapidapi.com"
 
 YOUTUBE_URL_PATTERN = re.compile(
     r"^(https?://)?(www\.)?"
@@ -26,6 +26,9 @@ def index():
 
 @app.route("/convert", methods=["POST"])
 def convert():
+    if not RAPIDAPI_KEY:
+        return jsonify({"error": "Server misconfiguration: RAPIDAPI_KEY is not set."}), 500
+
     data = request.get_json(silent=True)
     if not data or "url" not in data:
         return jsonify({"error": "Missing URL in request body."}), 400
@@ -35,74 +38,38 @@ def convert():
     if not is_valid_youtube_url(url):
         return jsonify({"error": "Invalid YouTube URL. Please enter a valid youtube.com or youtu.be link."}), 400
 
-    # Probe video info before downloading
-    probe_opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "skip_download": True,
-    }
     try:
-        with yt_dlp.YoutubeDL(probe_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-    except yt_dlp.utils.DownloadError as e:
-        msg = str(e)
-        if "Private video" in msg or "This video is private" in msg:
-            return jsonify({"error": "This video is private or unavailable."}), 400
-        if "Video unavailable" in msg or "removed" in msg.lower():
-            return jsonify({"error": "This video is unavailable or has been removed."}), 400
-        return jsonify({"error": f"Could not fetch video info: {msg}"}), 400
+        response = requests.get(
+            f"https://{RAPIDAPI_HOST}/get_mp3_download_link",
+            headers={
+                "x-rapidapi-host": RAPIDAPI_HOST,
+                "x-rapidapi-key": RAPIDAPI_KEY,
+            },
+            params={
+                "url": url,
+                "quality": "low",
+                "wait_until_the_file_is_ready": "false",
+            },
+            timeout=15,
+        )
+        response.raise_for_status()
+        result = response.json()
+    except requests.exceptions.Timeout:
+        return jsonify({"error": "Request timed out. Please try again."}), 502
+    except requests.exceptions.HTTPError as e:
+        status = e.response.status_code
+        if status == 403:
+            return jsonify({"error": "API key invalid or quota exceeded."}), 502
+        return jsonify({"error": f"API error ({status})."}), 502
     except Exception as e:
-        return jsonify({"error": f"Network or connection error: {str(e)}"}), 502
+        return jsonify({"error": f"Network error: {str(e)}"}), 502
 
-    duration = info.get("duration", 0)
-    if duration and duration > MAX_DURATION_SECONDS:
-        minutes = duration // 60
-        return jsonify({
-            "error": f"Video is too long ({minutes} min). Maximum allowed duration is 30 minutes."
-        }), 400
+    download_url = result.get("link") or result.get("download_url") or result.get("url")
+    if not download_url:
+        return jsonify({"error": "API did not return a download link. The video may be unavailable.", "raw": result}), 400
 
-    title = info.get("title", "audio")
-    # Sanitize filename
-    safe_title = re.sub(r'[<>:"/\\|?*]', "_", title).strip()
-    output_path = os.path.join(DOWNLOADS_DIR, f"{safe_title}.%(ext)s")
-
-    download_opts = {
-        # Select the best audio-only stream; never pull a video track
-        "format": "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best",
-        "format_sort": ["abr", "asr"],   # rank by audio bitrate, then sample rate
-        "outtmpl": output_path,
-        "quiet": True,
-        "no_warnings": True,
-        # Skip downloading any video stream entirely
-        "skip_download": False,          # we do want the audio file
-        "noplaylist": True,
-        "postprocessors": [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3",
-            "preferredquality": "192",
-        }],
-    }
-
-    try:
-        with yt_dlp.YoutubeDL(download_opts) as ydl:
-            ydl.download([url])
-    except yt_dlp.utils.DownloadError as e:
-        return jsonify({"error": f"Download failed: {str(e)}"}), 400
-    except Exception as e:
-        return jsonify({"error": f"Conversion error: {str(e)}"}), 500
-
-    mp3_path = os.path.join(DOWNLOADS_DIR, f"{safe_title}.mp3")
-    if not os.path.exists(mp3_path):
-        return jsonify({"error": "Conversion failed — MP3 file not found. Make sure ffmpeg is installed."}), 500
-
-    return send_file(
-        mp3_path,
-        mimetype="audio/mpeg",
-        as_attachment=True,
-        download_name=f"{safe_title}.mp3",
-    )
+    return jsonify({"download_url": download_url})
 
 
 if __name__ == "__main__":
-    os.makedirs(DOWNLOADS_DIR, exist_ok=True)
     app.run(debug=True)

@@ -272,29 +272,24 @@
           body: JSON.stringify({ url }),
         });
 
+        const data = await response.json().catch(() => ({}));
+
         if (!response.ok) {
-          const data = await response.json().catch(() => ({}));
           throw new Error(data.error || `Server error (${response.status})`);
         }
 
-        // Get filename from Content-Disposition header
-        const disposition = response.headers.get('Content-Disposition') || '';
-        const match = disposition.match(/filename\*?=(?:UTF-8'')?["']?([^"';\n]+)/i);
-        const filename = match ? decodeURIComponent(match[1]) : 'audio.mp3';
-        const title = filename.replace(/\.mp3$/i, '');
+        if (!data.download_url) {
+          throw new Error('No download link returned. The video may be unavailable.');
+        }
 
-        // Create blob URL for download
-        const blob = await response.blob();
-        const blobUrl = URL.createObjectURL(blob);
-
-        successTitle.textContent = title;
-        downloadLink.href = blobUrl;
-        downloadLink.download = filename;
+        successTitle.textContent = 'Your MP3 is ready';
+        downloadLink.href = data.download_url;
+        downloadLink.removeAttribute('download'); // external URL, let the API serve it
 
         showState(stateSuccess);
 
-        // Auto-click download
-        downloadLink.click();
+        // Auto-open download
+        window.location.href = data.download_url;
 
       } catch (err) {
         showState(stateError);
