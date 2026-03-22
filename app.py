@@ -19,6 +19,20 @@ def is_valid_youtube_url(url: str) -> bool:
     return bool(YOUTUBE_URL_PATTERN.match(url.strip()))
 
 
+def extract_video_id(url: str) -> str | None:
+    patterns = [
+        r"[?&]v=([\w\-]{11})",          # youtube.com/watch?v=ID
+        r"youtu\.be/([\w\-]{11})",       # youtu.be/ID
+        r"youtube\.com/shorts/([\w\-]{11})",  # youtube.com/shorts/ID
+        r"youtube\.com/embed/([\w\-]{11})",   # youtube.com/embed/ID
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return None
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -38,17 +52,19 @@ def convert():
     if not is_valid_youtube_url(url):
         return jsonify({"error": "Invalid YouTube URL. Please enter a valid youtube.com or youtu.be link."}), 400
 
+    video_id = extract_video_id(url)
+    if not video_id:
+        return jsonify({"error": "Could not extract video ID from URL."}), 400
+
+    print(f"[RapidAPI] Requesting video_id={video_id}", flush=True)
+
     try:
         response = requests.get(
-            f"https://{RAPIDAPI_HOST}/get_mp3_download_link",
+            f"https://{RAPIDAPI_HOST}/get_mp3_download_link/{video_id}",
             headers={
                 "x-rapidapi-host": RAPIDAPI_HOST,
                 "x-rapidapi-key": RAPIDAPI_KEY,
-            },
-            params={
-                "url": url,
-                "quality": "low",
-                "wait_until_the_file_is_ready": "false",
+                "Content-Type": "application/json",
             },
             timeout=15,
         )
